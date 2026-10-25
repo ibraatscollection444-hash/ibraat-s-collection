@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// Firebase Storage Rules for Ibraat's Collection
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Check if user is an authorized admin
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.token.email.lower() == 'ibraatscollection444@gmail.com' ||
+        request.auth.token.email == 'ibraatscollection444@gmail.com' ||
+        (request.auth.token.keys().hasAny(['admin']) && request.auth.token.admin == true)
+      );
+    }
+
+    // 1. Store Branding & Official Logos
+    // Read: Public (anyone visiting the store can view the official store logo)
+    // Write: Restricted strictly to authenticated store administrators
+    // Validates: Max 5MB file size, and must be a valid image mime type
+    match /branding/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() &&
+                      request.resource.size < 5 * 1024 * 1024 &&
+                      request.resource.contentType.matches('image/.*');
+      allow delete: if isAdmin();
+    }
+
+    // 2. Product and Banner Media
+    match /products/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /banners/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

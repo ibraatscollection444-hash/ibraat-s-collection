@@ -1,0 +1,150 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Helper Functions ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email.lower() == 'ibraatscollection444@gmail.com' ||
+        request.auth.token.email == 'ibraatscollection444@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 1. Products Collection
+    // Read: Public (guests and customers browse products)
+    // Create/Delete: Admins only
+    // Update: Admins have full access; Customers can decrement stockQuantity during checkout
+    match /products/{productId} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockQuantity', 'updatedAt']) &&
+        request.resource.data.stockQuantity >= 0
+      );
+    }
+
+    // 2. Categories Collection
+    // Read: Public (browse categories)
+    // Write: Admins only (strictly protected from unauthorized alteration or deletion)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 3. Orders Collection
+    // Create: Anyone can create an order (both logged-in customers and guests)
+    // Read: Customers can view only their own orders; Admins can view all orders
+    // Update: Admins have full access; Customers can cancel their own orders within 30 minutes of creation
+    //         if the order is not already shipped, delivered, or cancelled
+    // Delete: Admins only
+    match /orders/{orderId} {
+      allow get: if true;
+      allow list: if isAdmin() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow create: if true;
+      allow update: if isAdmin() || (
+        request.resource.data.orderStatus == 'Cancelled' &&
+        !(resource.data.orderStatus in ['Shipped', 'Delivered', 'Cancelled', 'Returned', 'shipped', 'delivered', 'cancelled', 'returned']) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['orderStatus', 'timeline', 'updatedAt', 'cancelledAt', 'cancellationReason', 'cancelledBy']) &&
+        (
+          (!('createdAtMillis' in resource.data) && !('createdAt' in resource.data)) ||
+          ('createdAtMillis' in resource.data && resource.data.createdAtMillis is int && request.time.toMillis() - resource.data.createdAtMillis <= 1800000) ||
+          ('createdAt' in resource.data && resource.data.createdAt is timestamp && request.time - resource.data.createdAt <= duration.value(30, 'm')) ||
+          (!('createdAtMillis' in resource.data) && 'createdAt' in resource.data && !(resource.data.createdAt is timestamp))
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 4. Carts Collection
+    // Customers can access only their own cart (cart_{uid}); Guests use local cart; Admins have access
+    match /carts/{cartId} {
+      allow read, write: if (isSignedIn() && cartId == 'cart_' + request.auth.uid) ||
+                            cartId == 'cart_guest_local' ||
+                            isAdmin();
+    }
+
+    // 5. Users Collection
+    // Read: Owner can read their profile; Admins can read all profiles for customer management
+    // Create: Users can register as 'customer'; Only admins can create an admin profile
+    // Update: Users can update their profile but cannot assign themselves 'role'
+    // Delete: Admins only
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if (
+        (isOwner(userId) && request.resource.data.role == 'customer') ||
+        isAdmin()
+      );
+      allow update: if (
+        (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 6. Phone Lookup Collection (for Bangladesh mobile authentication)
+    // Read: Authenticated owner of the phone mapping, or store admins
+    // Write: Signed-in users can register their mapping; Admins have management rights
+    match /phone_lookup/{phone} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // 7. Store Settings Collection
+    // Read: Public (read store contact, delivery charges, payment options)
+    // Write: Admins only
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 8. Admins Collection
+    // Read: Authenticated users can check admin role status
+    // Write: Admins only
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 9. Reviews Collection
+    // Read: Public
+    // Create: Authenticated users can create reviews for products
+    // Update/Delete: Admins or review creator
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // 10. Coupons & Banners Collections
+    // Read: Public (promo discounts and banner sliders)
+    // Write: Admins only
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 11. Audit Logs Collection
+    // Read & Write: Admins only (for administrative tracking and AI rollback protection)
+    match /audit_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

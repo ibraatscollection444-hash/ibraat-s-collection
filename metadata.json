@@ -1,0 +1,8 @@
+{
+  "name": "Ibraat's Collection",
+  "description": "Premium Bangladesh online shopping store featuring dresses, makeup, cosmetics, jewellery, bags, shoes, and accessories with customer shopping and secure admin dashboard in BDT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
